@@ -41,6 +41,12 @@ RUN apk add --no-cache tzdata openssl
 ENV TZ=Europe/Moscow
 ENV NODE_ENV=production
 ENV PORT=9999
+# Next.js standalone server.js defaults HOSTNAME from this — must be
+# 0.0.0.0, not localhost/127.0.0.1, or the process only accepts loopback
+# connections and is unreachable from outside the container (Render's own
+# proxy included), even though the app itself starts up fine and logs look
+# clean.
+ENV HOSTNAME=0.0.0.0
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
