@@ -1,0 +1,151 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  // Only needed for providers that split "pooled" vs "direct" connections
+  // (e.g. Neon, via PgBouncer) — Prisma Migrate/db push always use this one
+  // instead of `url` if it's set, since schema changes can't go through a
+  // transaction pooler. If DATABASE_URL is already a direct connection
+  // (plain local Postgres, Aiven, a self-hosted docker-compose db, etc.),
+  // just set DIRECT_URL to the same value, or see .env.example.
+  directUrl  = env("DIRECT_URL")
+  // btree_gist backs the EXCLUDE constraint in the "appointment_no_overlap"
+  // migration (prisma/migrations/.../migration.sql) — Prisma has no schema
+  // syntax for exclusion constraints, so that one's hand-written SQL, but
+  // declaring the extension here keeps `prisma migrate dev` from flagging
+  // drift once it's applied.
+  extensions = [btree_gist]
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  DONE
+}
+
+model AdminUser {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime @default(now())
+}
+
+model ServiceCategory {
+  id       String    @id @default(cuid())
+  name     String
+  order    Int       @default(0)
+  services Service[]
+}
+
+model Service {
+  id           String          @id @default(cuid())
+  name         String
+  categoryId   String
+  category     ServiceCategory @relation(fields: [categoryId], references: [id])
+  priceRub     Int?
+  durationMin  Int
+  active       Boolean         @default(true)
+  masters      MasterService[]
+  appointments Appointment[]
+  waitlist     WaitlistEntry[]
+}
+
+model Master {
+  id           String          @id @default(cuid())
+  name         String
+  phone        String?         @unique
+  passwordHash String?
+  photoUrl     String?
+  active       Boolean         @default(true)
+  services     MasterService[]
+  shifts       Shift[]
+  appointments Appointment[]
+  waitlist     WaitlistEntry[]
+}
+
+model MasterService {
+  masterId  String
+  serviceId String
+  master    Master  @relation(fields: [masterId], references: [id], onDelete: Cascade)
+  service   Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@id([masterId, serviceId])
+}
+
+// Weekly recurring working hours per master.
+// dayOfWeek: 0 = Sunday ... 6 = Saturday
+model Shift {
+  id           String @id @default(cuid())
+  masterId     String
+  master       Master @relation(fields: [masterId], references: [id], onDelete: Cascade)
+  dayOfWeek    Int
+  startMinutes Int // minutes since midnight, e.g. 10:00 = 600
+  endMinutes   Int
+
+  @@index([masterId, dayOfWeek])
+}
+
+model Client {
+  id           String          @id @default(cuid())
+  phone        String          @unique
+  name         String?
+  passwordHash String?
+  bonusPoints  Int             @default(0)
+  createdAt    DateTime        @default(now())
+  appointments Appointment[]
+  waitlist     WaitlistEntry[]
+}
+
+model Appointment {
+  id             String            @id @default(cuid())
+  masterId       String
+  // Restrict (explicit — matches Prisma's implicit default for required
+  // relations, spelled out so it can't be silently changed later): a
+  // master with any appointment on record, past or future, can't be
+  // hard-deleted until those appointments are gone. See DELETE
+  // /api/admin/masters, which checks this proactively for a friendly error
+  // instead of letting the raw FK violation surface.
+  master         Master            @relation(fields: [masterId], references: [id], onDelete: Restrict)
+  serviceId      String
+  service        Service           @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  clientId       String
+  client         Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  startAt        DateTime
+  endAt          DateTime
+  status         AppointmentStatus @default(CONFIRMED)
+  createdByAdmin Boolean           @default(false)
+  notes          String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([masterId, startAt])
+  @@index([clientId])
+}
+
+model WaitlistEntry {
+  id          String   @id @default(cuid())
+  clientId    String
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  serviceId   String
+  service     Service  @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  masterId    String?
+  // SetNull (explicit — matches Prisma's implicit default for optional
+  // relations): deleting a master just clears masterId on any queue entry
+  // that named them, turning it into an "any master" entry instead of
+  // deleting the client's place in line.
+  master      Master?  @relation(fields: [masterId], references: [id], onDelete: SetNull)
+  desiredFrom DateTime
+  desiredTo   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([clientId])
+  @@index([masterId])
+  @@index([serviceId])
+}
+

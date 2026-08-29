@@ -1,0 +1,8 @@
+Евгений +375291110001 мастер (пароль master12345)
+Дарья +375291110002 мастер (пароль master12345)
+Админ admin@example.com админ (пароль admin12345)
+
+
+npx prisma migrate dev --name master-accounts
+npm run seed
+npm run dev
