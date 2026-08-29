@@ -7,6 +7,12 @@ RUN npm install
 
 FROM base AS builder
 WORKDIR /app
+# Alpine's minimal image ships OpenSSL 3.x but no `openssl` package itself —
+# without it, Prisma can't detect the libssl version and silently guesses
+# wrong ("Defaulting to openssl-1.1.x"), then fails at runtime looking for
+# a 1.1 lib that doesn't exist. Installing it lets `prisma generate` pick
+# the correct engine binary for this image.
+RUN apk add --no-cache openssl
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npx prisma generate
@@ -18,7 +24,7 @@ RUN npm run build
 # actually affect what "Sunday 00:00" means.
 FROM base AS scheduler
 WORKDIR /app
-RUN apk add --no-cache tzdata
+RUN apk add --no-cache tzdata openssl
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npx prisma generate
@@ -31,7 +37,7 @@ WORKDIR /app
 # Moscow (UTC+3) offset in src/lib/timezone.ts, independent of the
 # container's own time zone — but set it anyway so anything that ever
 # falls back to the system clock (logs, etc.) is still sane.
-RUN apk add --no-cache tzdata
+RUN apk add --no-cache tzdata openssl
 ENV TZ=Europe/Moscow
 ENV NODE_ENV=production
 ENV PORT=9999
